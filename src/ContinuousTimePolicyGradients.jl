@@ -1,7 +1,7 @@
 module ContinuousTimePolicyGradients
     using LinearAlgebra, Statistics
     using OrdinaryDiffEq, DiffEqFlux
-    using UnPack, ComponentArrays, Plots
+    using UnPack, Plots
 
     export CTPG_train
 
