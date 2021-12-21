@@ -1,5 +1,9 @@
 module ContinuousTimePolicyGradients
+    using LinearAlgebra, Statistics
+    using OrdinaryDiffEq, DiffEqFlux
+    using UnPack, Plots
 
-# Write your package code here.
+    export CTPG_train
 
+    include("construct_CTPG.jl")
 end
