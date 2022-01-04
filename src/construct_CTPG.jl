@@ -141,7 +141,7 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cos
     function generate_savedata(p_NN)
         return function (sol, i)
             IO = eval_IO(ensemble[i].r, p_NN).(sol.t, sol.u)            
-            return ((; sol = sol, u = [u for (u, y, y_NN) in IO], y = [y for (u, y, y_NN) in IO], y_NN = [y_NN for (u,y,y_NN) in IO]), false)
+            return ((; sol = sol, u = [u for (u, y, y_NN) in IO], y = [y for (u, y, y_NN) in IO], y_NN = [y_NN for (u, y, y_NN) in IO]), false)
         end
     end
 

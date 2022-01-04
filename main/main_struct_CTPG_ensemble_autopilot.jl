@@ -108,7 +108,7 @@ function main()
     scenario = (; ensemble = ensemble, t_span = t_span, dim_x = dim_x, dim_x_c = dim_x_c)
 
     # NN training
-    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = 1, maxiters_2 = 1, saveat = 0.1f0)
+    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = 50, maxiters_2 = 30, saveat = 0.1f0)
 
     return result, fwd_ensemble_sol, loss_history
 end
