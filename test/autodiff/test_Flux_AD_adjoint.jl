@@ -1,3 +1,39 @@
+# compatibility of modelingtoolkitize and ensemble parellel simulation
+using DifferentialEquations, ModelingToolkit
+function rober(du,u,p,t)
+  y₁,y₂,y₃ = u
+  k₁,k₂,k₃ = p
+  du[1] = -k₁*y₁+k₃*y₂*y₃
+  du[2] =  k₁*y₁-k₂*y₂^2-k₃*y₂*y₃
+  du[3] =  k₂*y₂^2
+  nothing
+end
+
+function prob_func(prob,i,repeat)
+    p_i = collect(prob.p)
+    p_i[1] = 1E-2 * i 
+    remake(prob,p=p_i)
+    # remake(prob,u0=rand()*prob.u0)
+end
+
+prob = ODEProblem(rober,[1.0,0.0,0.0],(0.0,1e1),(0.04,3e7,1e4))
+sys = modelingtoolkitize(prob)
+prob_jac = ODEProblem(sys,[],(0.0,1e1),jac=true)
+
+
+ensemble_prob = EnsembleProblem(prob,prob_func=prob_func)
+ensemble_prob_jac = EnsembleProblem(prob_jac,prob_func=prob_func)
+
+@time sim = solve(ensemble_prob,Tsit5(),EnsembleSerial(),trajectories=10)
+@time sim_jac = solve(ensemble_prob_jac,Tsit5(),EnsembleSerial(),trajectories=10)
+
+# conclusion 1) sim_jac is faster than sim if ensemble algorithm is EnsembleSerial(). 
+# ---> sim_jac is even slower than sim when EnsembleThreads() is used.
+# conclusion 2) sim_jac[i].prob.p is determined as intended by prob_func even though the modelingtoolkitized system is used.
+
+
+## ------------------------------------------------------------------------------------
+
 using Flux
 
 d = Dense(5,2)

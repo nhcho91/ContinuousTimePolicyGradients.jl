@@ -3,7 +3,7 @@ module ContinuousTimePolicyGradients
     using OrdinaryDiffEq, DiffEqFlux
     using UnPack, Plots
 
-    export CTPG_train
+    export CTPG_train, view_result
 
     include("construct_CTPG.jl")
 end

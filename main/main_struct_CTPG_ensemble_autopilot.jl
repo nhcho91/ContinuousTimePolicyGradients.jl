@@ -1,5 +1,6 @@
 using ContinuousTimePolicyGradients
-using DiffEqFlux, ComponentArrays, LinearAlgebra, JLD2, OrdinaryDiffEq, DiffEqGPU
+using DiffEqFlux, ComponentArrays, LinearAlgebra, JLD2, OrdinaryDiffEq
+using Plots
 
 function main()
     # model + problem parameters
@@ -58,11 +59,11 @@ function main()
         α̇ = Q * S / m / V * (C_N * cos(α) - C_A * sin(α)) + g / V * cos(γ) + q
         a_z = V * (q - α̇)
 
-        K_A, K_I, K_R = policy_NN([α / α_max; M / M_max; h / h_max], p_NN)
+        y_NN = (K_A, K_I, K_R) = policy_NN([α / α_max; M / M_max; h / h_max], p_NN)
 
         dx_c = [-K_A * (a_z - a_z_cmd) + q - a_z_cmd / V]
         u    = [-K_I * x_int - K_R * q]
-        return dx_c, u
+        return dx_c, u, y_NN
     end
 
     # cost definition
@@ -107,11 +108,21 @@ function main()
     scenario = (; ensemble = ensemble, t_span = t_span, dim_x = dim_x, dim_x_c = dim_x_c)
 
     # NN training
-    result, fwd_sol_nominal, loss_history = CTPG_train(dynamics_plant, dynamics_controller, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = 50, maxiters_2 = 30, saveat = 0.1f0)
+    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = 1, maxiters_2 = 1, saveat = 0.1f0)
 
-    return result, fwd_sol_nominal, loss_history
+    return result, fwd_ensemble_sol, loss_history
 end
 
+# execute optimisation and simulation
+@time (result, fwd_ensemble_sol, loss_history) = main()
 
-@time result, fwd_sol_nominal, loss_history = main()
-jldsave("autopilot_saveat_0p1.jld2"; result, fwd_sol_nominal, loss_history)
+# save results
+jldsave("autopilot_saveat_0p1.jld2"; result, fwd_ensemble_sol, loss_history)
+
+## plot results
+(fwd_ensemble_sol, loss_history) = load("autopilot_saveat_0p1.jld2", "fwd_ensemble_sol", "loss_history")
+
+x_names = ["\$h\$" "\$V\$" "\$\\alpha\$" "\$q\$" "\$\\theta\$" "\$\\delta\$" "\$\\dot{\\delta}\$"]
+vars_x = 1:6 # [1,2,3, (1,2), (2,3)]
+
+(f_x, f_u, f_y, f_y_NN, f_loss) = view_result(1, fwd_ensemble_sol, loss_history; x_names = x_names, vars_x = vars_x)
