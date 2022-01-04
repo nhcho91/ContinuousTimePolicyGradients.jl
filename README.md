@@ -28,7 +28,7 @@ The signals are defined as described below:
 - `x_c`: controller state
 - `u`: plant input (= controller output)
 - `r`: exogenous reference
-- `x_aug`: augmented forward dynamics state (= [x; x_c; ∫cost_running])
+- `x_aug`: augmented forward dynamics state (= `[x; x_c; ∫cost_running]`)
 - `p_NN`: neural network parameter
 
 The arguments should be provided as explained below:
@@ -42,16 +42,16 @@ The arguments should be provided as explained below:
 - `scenario`: Contains the parameters related with the ensemble-based training scenarios.
     - `ensemble`: A vector of the initial plant state `x₀` and the reference `r` constituting the trajectory realisations.
     - `t_span`: Time span for forward-pass integration
-    - `dim_x`: length(x)
-    - `dim_x_c`: length(x_c)
+    - `dim_x`: `length(x)`
+    - `dim_x_c`: `length(x_c)`
 
 The keyword arguments should be provided as explained below:
 
 - `solve_alg`: The algorithm used for solving ODEs. Default value is `Tsit5()`
-- `sense_alg`: The algorithm used for adjoint sensitivity analysis. Default value is `InterpolatingAdjoint(autojacvec = ZygoteVJP())`, because the control problems usually render the `BacksolveAdjoint()` unstable. The vjp choice `autojacvec = ReverseDiffVJP(true)`` is usually faster than `ZygoteVJP()``, when the ODE function does not have any branching inside. Please refer to (https://diffeqflux.sciml.ai/dev/ControllingAdjoints/) for further details. 
+- `sense_alg`: The algorithm used for adjoint sensitivity analysis. Default value is `InterpolatingAdjoint(autojacvec = ZygoteVJP())`, because the control problems usually render the `BacksolveAdjoint()` unstable. The vjp choice `autojacvec = ReverseDiffVJP(true)` is usually faster than `ZygoteVJP()`, when the ODE function does not have any branching inside. Please refer to the [DiffEqFlux documentation](https://diffeqflux.sciml.ai/dev/ControllingAdjoints/) for further details. 
 - `ensemble_alg`: The algorithm used for handling ensemble of ODEs. Default value is `EnsembleThreads()` for multi-threaded computation in CPU.
 - `opt_1`: The algorithm used for the first phase of optimisation which rapidly delivers the parameter to a favourable region around a local minimum. Default value is `ADAM(0.01)`.
-- `opt_2`: The algorithm used for the second phase of opitmisaiton. Defalut value is `LBFGS()` which refines the result of the first phase to find a more precise minimum. Please refer to (https://diffeqflux.sciml.ai/dev/sciml_train/) for further details about two-phase composition of optimisors.
+- `opt_2`: The algorithm used for the second phase of opitmisaiton. Defalut value is `LBFGS()` which refines the result of the first phase to find a more precise minimum. Please refer to the [DiffEqFlux documentation](https://diffeqflux.sciml.ai/dev/sciml_train/) for further details about two-phase composition of optimisers.
 - `maxiters_1`: The maximum number of iterations allowed for the first phase of optimisation with `opt_1`. Defalut value is `100`.
 - `maxiters_2`: The maximum number of iterations allowed for the second phase of optimisation with `opt_2`. Defalut value is `100`.
 - `progress_plot`: The indicator to plot the state history for a nominal condition among the ensemble during the learning process. Default value is `true`
