@@ -24,7 +24,7 @@ The signals are defined as described below:
 
 - `t`: time
 - `x`: plant state
-- `y`: plant output
+- `y`: plant output (= sensor output)
 - `x_c`: controller state
 - `u`: plant input (= controller output)
 - `r`: exogenous reference
@@ -34,7 +34,8 @@ The signals are defined as described below:
 The arguments should be provided as explained below:
 
 - `dynamics_plant`: Describes the dynamics of the plant to be controlled. Input arguments `x` and `u` should be of Vector type.
-- `dynamics_controller`: Describes the dynamics of the controller that includes neural networks components. Input arguments `x_c`, `x`, `r`, and `p_NN` should be of Vector type.
+- `dynamics_controller`: Describes the dynamics of the controller that includes neural networks components. Input arguments `x_c`, `y`, `r`, and `p_NN` should be of Vector type.
+- `dynamics_sensor`: Describes the dynamics of the sensor that measures output variables fed to the controller. Input arguments `x` should be of Vector type: 
 - `cost_running`: Describes the running cost defined as the integrand of the Lagrange-form continuous functional. Input arguments `x`, `y`, `u`, and `r` should be of Vector type.
 - `cost_terminal`: Describes the terminal cost defined as the Mayer-form problem cost function. Defines a Bolza-form problem along with `cost_running`. Input arguments `x_f` and `r` should be of Vector type.
 - `cost_regularisor`: Describes the regularisation term appended to the cost (loss) function. Input argument `p_NN` should be of Vector type.
@@ -54,7 +55,9 @@ The keyword arguments should be provided as explained below:
 - `opt_2`: The algorithm used for the second phase of opitmisaiton. Defalut value is `LBFGS()` which refines the result of the first phase to find a more precise minimum. Please refer to the [DiffEqFlux documentation](https://diffeqflux.sciml.ai/dev/sciml_train/) for further details about two-phase composition of optimisers.
 - `maxiters_1`: The maximum number of iterations allowed for the first phase of optimisation with `opt_1`. Defalut value is `100`.
 - `maxiters_2`: The maximum number of iterations allowed for the second phase of optimisation with `opt_2`. Defalut value is `100`.
-- `progress_plot`: The indicator to plot the state history for a nominal condition among the ensemble during the learning process. Default value is `true`
+- `progress_plot`: The indicator to plot the state history for a nominal condition among the ensemble during the learning process. Default value is `true`.
+- `i_nominal`: The index to select the case to plot using `progress_plot` during optimisation process from the `ensemble` defined in `scenario`. Defalut value is `nothing`.
+- `p_NN_0`: Initial value of the NN parameters supplied by the user to bypass random initialisation of `p_NN` or to continue optimisation from the previous result. Defalut value is `nothing`.
 - `solve_kwargs...`: Additional keyword arguments that are passed onto the ODE solver.
 
 `CTPG_train()` returns the following outputs:

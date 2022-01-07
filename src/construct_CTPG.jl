@@ -13,17 +13,18 @@ The signals are defined as described below:
 
 - `t`: time
 - `x`: plant state
-- `y`: plant output
+- `y`: plant output (= sensor output)
 - `x_c`: controller state
 - `u`: plant input (= controller output)
 - `r`: exogenous reference
-- `x_aug`: augmented forward dynamics state (= [x; x_c; ∫cost_running])
+- `x_aug`: augmented forward dynamics state (= `[x; x_c; ∫cost_running]`)
 - `p_NN`: neural network parameter
 
 The arguments should be provided as explained below:
 
 - `dynamics_plant`: Describes the dynamics of the plant to be controlled. Input arguments `x` and `u` should be of Vector type.
-- `dynamics_controller`: Describes the dynamics of the controller that includes neural networks components. Input arguments `x_c`, `x`, `r`, and `p_NN` should be of Vector type.
+- `dynamics_controller`: Describes the dynamics of the controller that includes neural networks components. Input arguments `x_c`, `y`, `r`, and `p_NN` should be of Vector type.
+- `dynamics_sensor`: Describes the dynamics of the sensor that measures output variables fed to the controller. Input arguments `x` should be of Vector type: 
 - `cost_running`: Describes the running cost defined as the integrand of the Lagrange-form continuous functional. Input arguments `x`, `y`, `u`, and `r` should be of Vector type.
 - `cost_terminal`: Describes the terminal cost defined as the Mayer-form problem cost function. Defines a Bolza-form problem along with `cost_running`. Input arguments `x_f` and `r` should be of Vector type.
 - `cost_regularisor`: Describes the regularisation term appended to the cost (loss) function. Input argument `p_NN` should be of Vector type.
@@ -31,19 +32,21 @@ The arguments should be provided as explained below:
 - `scenario`: Contains the parameters related with the ensemble-based training scenarios.
     - `ensemble`: A vector of the initial plant state `x₀` and the reference `r` constituting the trajectory realisations.
     - `t_span`: Time span for forward-pass integration
-    - `dim_x`: length(x)
-    - `dim_x_c`: length(x_c)
+    - `dim_x`: `length(x)`
+    - `dim_x_c`: `length(x_c)`
 
 The keyword arguments should be provided as explained below:
 
 - `solve_alg`: The algorithm used for solving ODEs. Default value is `Tsit5()`
-- `sense_alg`: The algorithm used for adjoint sensitivity analysis. Default value is `InterpolatingAdjoint(autojacvec = ZygoteVJP())`, because the control problems usually render the `BacksolveAdjoint()` unstable. The vjp choice `autojacvec = ReverseDiffVJP(true)`` is usually faster than `ZygoteVJP()``, when the ODE function does not have any branching inside. Please refer to (https://diffeqflux.sciml.ai/dev/ControllingAdjoints/) for further details. 
+- `sense_alg`: The algorithm used for adjoint sensitivity analysis. Default value is `InterpolatingAdjoint(autojacvec = ZygoteVJP())`, because the control problems usually render the `BacksolveAdjoint()` unstable. The vjp choice `autojacvec = ReverseDiffVJP(true)` is usually faster than `ZygoteVJP()`, when the ODE function does not have any branching inside. Please refer to the [DiffEqFlux documentation](https://diffeqflux.sciml.ai/dev/ControllingAdjoints/) for further details. 
 - `ensemble_alg`: The algorithm used for handling ensemble of ODEs. Default value is `EnsembleThreads()` for multi-threaded computation in CPU.
 - `opt_1`: The algorithm used for the first phase of optimisation which rapidly delivers the parameter to a favourable region around a local minimum. Default value is `ADAM(0.01)`.
-- `opt_2`: The algorithm used for the second phase of opitmisaiton. Defalut value is `LBFGS()` which refines the result of the first phase to find a more precise minimum. Please refer to (https://diffeqflux.sciml.ai/dev/sciml_train/) for further details about two-phase composition of optimisors.
+- `opt_2`: The algorithm used for the second phase of opitmisaiton. Defalut value is `LBFGS()` which refines the result of the first phase to find a more precise minimum. Please refer to the [DiffEqFlux documentation](https://diffeqflux.sciml.ai/dev/sciml_train/) for further details about two-phase composition of optimisers.
 - `maxiters_1`: The maximum number of iterations allowed for the first phase of optimisation with `opt_1`. Defalut value is `100`.
 - `maxiters_2`: The maximum number of iterations allowed for the second phase of optimisation with `opt_2`. Defalut value is `100`.
-- `progress_plot`: The indicator to plot the state history for a nominal condition among the ensemble during the learning process. Default value is `true`
+- `progress_plot`: The indicator to plot the state history for a nominal condition among the ensemble during the learning process. Default value is `true`.
+- `i_nominal`: The index to select the case to plot using `progress_plot` during optimisation process from the `ensemble` defined in `scenario`. Defalut value is `nothing`.
+- `p_NN_0`: Initial value of the NN parameters supplied by the user to bypass random initialisation of `p_NN` or to continue optimisation from the previous result. Defalut value is `nothing`.
 - `solve_kwargs...`: Additional keyword arguments that are passed onto the ODE solver.
 
 `CTPG_train()` returns the following outputs:
@@ -53,15 +56,19 @@ The keyword arguments should be provided as explained below:
 - `loss_history`: The history of loss function evaluated at each iteration.
 """
 
-function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; solve_alg = Tsit5(), sense_alg = InterpolatingAdjoint(autojacvec = ZygoteVJP()), ensemble_alg = EnsembleThreads(), opt_1 = ADAM(0.01), opt_2 = LBFGS(), maxiters_1 = 100, maxiters_2 = 100, progress_plot = true, solve_kwargs...)
-    
+function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dynamics_sensor::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; solve_alg = Tsit5(), sense_alg = InterpolatingAdjoint(autojacvec = ZygoteVJP()), ensemble_alg = EnsembleThreads(), opt_1 = ADAM(0.01), opt_2 = LBFGS(), maxiters_1 = 100, maxiters_2 = 100, progress_plot = true, i_nominal = nothing, p_NN_0 = nothing, solve_kwargs...)
+
     # scenario parameters
     @unpack ensemble, t_span, dim_x, dim_x_c = scenario
     dim_ensemble = length(ensemble)
-    i_nominal    = max(round(Int, dim_ensemble / 2), 1)
+    if isnothing(i_nominal)
+        i_nominal = max(round(Int, dim_ensemble / 2), 1)
+    end
 
     # NN parameters initialisation
-    p_NN_0 = initial_params(policy_NN)
+    if isnothing(p_NN_0)
+        p_NN_0 = initial_params(policy_NN)
+    end
 
     # augmented dynamics
     function fwd_dynamics(r)
@@ -69,9 +76,10 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cos
             x   = x_aug[1:dim_x]
             x_c = x_aug[dim_x+1:end-1]
             # ∫cost_running = x_aug[end]
-
-            (dx_c, u, _) = dynamics_controller(t, x_c, x, r, p_NN, policy_NN)
-            (dx, y)      = dynamics_plant(t, x, u)
+            
+            y            = dynamics_sensor(t, x)
+            (dx_c, u, _) = dynamics_controller(t, x_c, y, r, p_NN, policy_NN)
+            dx           = dynamics_plant(t, x, u)
 
             return [dx; dx_c; cost_running(t, x, y, u, r)]
         end
@@ -87,9 +95,9 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cos
     end
 
     if dim_ensemble == 1
-        prob_mtk       = modelingtoolkitize(prob_base)
-        prob_base      = ODEProblem(prob_mtk, [], t_span, jac = true)
-        ensemble_alg   = EnsembleSerial()
+        prob_mtk = modelingtoolkitize(prob_base)
+        prob_base = ODEProblem(prob_mtk, [], t_span, jac = true)
+        ensemble_alg = EnsembleSerial()
     end
 
     # loss function definition
@@ -97,7 +105,7 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cos
         ensemble_prob = EnsembleProblem(prob_base, prob_func = generate_probs(p_NN))
 
         fwd_ensemble_sol = Array(solve(ensemble_prob, solve_alg, ensemble_alg, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...))
-
+        
         loss_val = mean(cost_terminal(fwd_ensemble_sol[1:dim_x, end, i], ensemble[i].r) for i = 1:dim_ensemble) + mean(fwd_ensemble_sol[end, end, :]) + cost_regularisor(p_NN)
 
         return loss_val, fwd_ensemble_sol
@@ -126,46 +134,47 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cos
 
     # Forward solution for optimised p_NN 
     function eval_IO(r, p_NN)
-        # Evaluation of input u, output u, and NN output y_NN at each t
+        # Evaluation of input u, output y, and NN output y_NN at each t
         return function (t, x_aug)
-            x   = x_aug[1:dim_x]
+            x = x_aug[1:dim_x]
             x_c = x_aug[dim_x+1:end-1]
-            
-            (_, u, y_NN) = dynamics_controller(t, x_c, x, r, p_NN, policy_NN)
-            (_, y)       = dynamics_plant(t, x, u)
-    
+
+            y = dynamics_sensor(t, x)
+            (_, u, y_NN) = dynamics_controller(t, x_c, y, r, p_NN, policy_NN)
+
             return (; u = u, y = y, y_NN = y_NN)
         end
     end
 
     function generate_savedata(p_NN)
         return function (sol, i)
-            IO = eval_IO(ensemble[i].r, p_NN).(sol.t, sol.u)            
+            IO = eval_IO(ensemble[i].r, p_NN).(sol.t, sol.u)
             return ((; sol = sol, u = [u for (u, y, y_NN) in IO], y = [y for (u, y, y_NN) in IO], y_NN = [y_NN for (u, y, y_NN) in IO]), false)
         end
     end
 
-    fwd_ensemble_sol = solve(EnsembleProblem(prob_base, prob_func = generate_probs(result.u), output_func = generate_savedata(result.u) ), solve_alg, ensemble_alg, trajectories = dim_ensemble, sensealg = sense_alg ; solve_kwargs...)
+    fwd_ensemble_sol = solve(EnsembleProblem(prob_base, prob_func = generate_probs(result.u), output_func = generate_savedata(result.u)), solve_alg, ensemble_alg, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
 
     return result, fwd_ensemble_sol, loss_history
 end
 
 
 
-function view_result(i, fwd_ensemble_sol, loss_history; 
-    vars_x = nothing, x_names = [], vars_u = nothing, u_names = [], vars_y = nothing, y_names = [], vars_y_NN = nothing, y_NN_names = [])
-    
-    (ylabel_x, ylabel_u, ylabel_y, ylabel_y_NN) = ("state", "input", "output", "NN output")
-    (dim_x_aug, dim_u, dim_y, dim_y_NN) = (length(fwd_ensemble_sol[i].sol[1]), length(fwd_ensemble_sol[i].u[1]), length(fwd_ensemble_sol[i].y[1]), length(fwd_ensemble_sol[i].y_NN[1]))
-    
+function view_result(i_plot_list, fwd_ensemble_sol, loss_history, save_fig = true;
+    vars_x = nothing, x_names = [], vars_u = nothing, u_names = [], vars_y = nothing, y_names = [], vars_y_NN = nothing, y_NN_names = [], plot_kwargs...)
+
+    # labels, variables to be plotted, and layouts setting
+    (dim_x_aug, dim_u, dim_y, dim_y_NN) = (length(fwd_ensemble_sol[1].sol[1]), length(fwd_ensemble_sol[1].u[1]), length(fwd_ensemble_sol[1].y[1]), length(fwd_ensemble_sol[1].y_NN[1]))
+    (xlabel_t, ylabel_x, ylabel_u, ylabel_y, ylabel_y_NN) = ("\$t\$", "state", "input", "output", "NN output")
+
     if ~isnothing(vars_x)
         layout_x = (length(vars_x), 1)
         if ~isempty(x_names)
             ylabel_x = x_names[vars_x']
         end
     else
-        layout_x = (dim_x_aug-1, 1)
-        vars_x   = 1:dim_x_aug-1
+        layout_x = (dim_x_aug - 1, 1)
+        vars_x = 1:dim_x_aug-1
     end
 
     if ~isnothing(vars_u)
@@ -175,7 +184,7 @@ function view_result(i, fwd_ensemble_sol, loss_history;
         end
     else
         layout_u = (dim_u, 1)
-        vars_u   = 1:dim_u
+        vars_u = 1:dim_u
     end
 
     if ~isnothing(vars_y)
@@ -185,7 +194,7 @@ function view_result(i, fwd_ensemble_sol, loss_history;
         end
     else
         layout_y = (dim_y, 1)
-        vars_y   = 1:dim_y
+        vars_y = 1:dim_y
     end
 
     if ~isnothing(vars_y_NN)
@@ -195,18 +204,57 @@ function view_result(i, fwd_ensemble_sol, loss_history;
         end
     else
         layout_y_NN = (dim_y_NN, 1)
-        vars_y_NN    = 1:dim_y_NN
+        vars_y_NN = 1:dim_y_NN
     end
 
-    f_x = plot(fwd_ensemble_sol[i].sol, vars = vars_x, layout = layout_x, label = :false, xlabel = "\$t\$", ylabel = ylabel_x, size = (800, 160 * length(vars_x)))
+    # plotting
+    if isempty(i_plot_list)
+        i_plot_list = 1:length(fwd_ensemble_sol)
+    end
 
-    f_u = plot(fwd_ensemble_sol[i].sol.t, hcat(fwd_ensemble_sol[i].u...)'[:,vars_u], layout = layout_u, label = :false, xlabel = "\$t\$", ylabel = ylabel_u)
+    (f_x, f_u, f_y, f_y_NN) = (plot(), plot(), plot(), plot())
+    for i in i_plot_list
+        # data preprocessing
+        @unpack sol, u, y, y_NN = fwd_ensemble_sol[i]
+        @unpack t = sol
 
-    f_y = plot(fwd_ensemble_sol[i].sol.t, hcat(fwd_ensemble_sol[i].y...)'[:,vars_y], layout = layout_y, label = :false, xlabel = "\$t\$", ylabel = ylabel_y)
+        u = reduce(vcat, u')     # hcat(u...)'
+        y = reduce(vcat, y')     # hcat(y...)'
+        y_NN = reduce(vcat, y_NN')  # hcat(y_NN...)'
 
-    f_y_NN = plot(fwd_ensemble_sol[i].sol.t, hcat(fwd_ensemble_sol[i].y_NN...)'[:,vars_y_NN], layout = layout_y_NN, label = :false, xlabel = "\$t\$", ylabel = ylabel_y_NN)
+        if i == first(i_plot_list)
+            f_x = plot(sol, vars = vars_x, layout = layout_x, label = :false, xlabel = xlabel_t, ylabel = ylabel_x, size = (800, 160 * length(vars_x)); plot_kwargs...)
 
-    f_loss = plot(loss_history, label = :false, xlabel = "iteration", ylabel = "\$L\$")
+            f_u = plot(t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u; plot_kwargs...)
 
-    return f_x, f_u, f_y, f_y_NN, f_loss
+            f_y = plot(t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y; plot_kwargs...)
+
+            f_y_NN = plot(t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN; plot_kwargs...)
+        else
+            plot!(f_x, sol, vars = vars_x, layout = layout_x, label = :false, xlabel = xlabel_t, ylabel = ylabel_x, size = (800, 160 * length(vars_x)); plot_kwargs...)
+
+            plot!(f_u, t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u; plot_kwargs...)
+
+            plot!(f_y, t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y; plot_kwargs...)
+
+            plot!(f_y_NN, t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN; plot_kwargs...)
+        end
+    end
+    f_L = plot(loss_history, label = :false, xlabel = "iteration", ylabel = "\$L\$"; plot_kwargs...)
+
+    display(f_x)
+    display(f_u)
+    display(f_y)
+    display(f_y_NN)
+    display(f_L)
+
+    if save_fig
+        savefig(f_x,    "f_x.pdf")
+        savefig(f_u,    "f_u.pdf")
+        savefig(f_y,    "f_y.pdf")
+        savefig(f_y_NN, "f_y_NN.pdf")
+        savefig(f_L,    "f_L.pdf")
+    end
+
+    return f_x, f_u, f_y, f_y_NN, f_L
 end
