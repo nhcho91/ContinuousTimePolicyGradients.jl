@@ -43,6 +43,7 @@ The arguments should be provided as explained below:
 - `scenario`: Contains the parameters related with the ensemble-based training scenarios.
     - `ensemble`: A vector of the initial plant state `x₀` and the reference `r` constituting the trajectory realisations.
     - `t_span`: Time span for forward-pass integration
+    - `t_save`: Array of time points to be saved while solving ODE. Typically defined as `t_save = t_span[1]:Δt_save:t_span[2]`
     - `dim_x`: `length(x)`
     - `dim_x_c`: `length(x_c)`
 

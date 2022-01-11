@@ -1,3 +1,72 @@
+using DifferentialEquations
+prob = ODEProblem((u,p,t)->1.01*[u[2];u[1]],[0.5, 1.0],(0.0,1.0))
+function prob_func(prob,i,repeat)
+  remake(prob,u0=rand()*prob.u0)
+end
+ensemble_prob = EnsembleProblem(prob,prob_func=prob_func)
+sim = solve(ensemble_prob,Tsit5(),EnsembleThreads(),trajectories=100)
+
+## ------------------------------------------------------------------------------------
+
+using DifferentialEquations, Plots, GalacticOptim
+
+function lotka_volterra!(du,u,p,t)
+    rab, wol = u
+    α,β,γ,δ=p
+    du[1] = drab = α*rab - β*rab*wol
+    du[2] = dwol = γ*rab*wol - δ*wol
+    nothing
+end
+
+u0 = [1.0,1.0]
+tspan = (0.0,10.0)
+p = [1.5,1.0,3.0,1.0]
+prob = ODEProblem(lotka_volterra!,u0,tspan,p)
+sol = solve(prob,saveat=0.1)
+plot(sol)
+
+dataset = Array(sol)
+scatter!(sol.t,dataset')
+
+tmp_prob = remake(prob, p=[1.2,0.8,2.5,0.8])
+tmp_sol = solve(tmp_prob)
+plot(tmp_sol)
+scatter!(sol.t,dataset')
+
+function loss(p)
+  tmp_prob = remake(prob, p=p)
+  tmp_sol = solve(tmp_prob,Tsit5(),saveat=0.1)
+  if tmp_sol.retcode == :Success
+    return sum(abs2,Array(tmp_sol) - dataset)
+  else
+    return 1E10
+  end
+end
+
+# function loss(p)
+#   tmp_prob = remake(prob, p=p)
+#   tmp_sol = solve(tmp_prob,Tsit5(),saveat=0.1)
+#   if size(tmp_sol) == size(dataset)
+#     return sum(abs2,Array(tmp_sol) .- dataset)
+#   else
+#     return Inf
+#   end
+# end
+
+using DiffEqFlux
+
+pinit = [1.2,0.8,2.5,0.8]
+res = DiffEqFlux.sciml_train(loss,pinit,ADAM(), maxiters = 100)
+
+# res = DiffEqFlux.sciml_train(loss,pinit,BFGS(), maxiters = 100) ### errors!
+
+
+#try Newton method of optimization
+res = DiffEqFlux.sciml_train(loss,pinit,BFGS())
+
+## ------------------------------------------------------------------------------------
+
+
 # compatibility of modelingtoolkitize and ensemble parellel simulation
 using DifferentialEquations, ModelingToolkit
 function rober(du,u,p,t)

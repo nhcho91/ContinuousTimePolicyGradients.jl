@@ -32,6 +32,7 @@ The arguments should be provided as explained below:
 - `scenario`: Contains the parameters related with the ensemble-based training scenarios.
     - `ensemble`: A vector of the initial plant state `x₀` and the reference `r` constituting the trajectory realisations.
     - `t_span`: Time span for forward-pass integration
+    - `t_save`: Array of time points to be saved while solving ODE. Typically defined as `t_save = t_span[1]:Δt_save:t_span[2]`
     - `dim_x`: `length(x)`
     - `dim_x_c`: `length(x_c)`
 
@@ -59,8 +60,9 @@ The keyword arguments should be provided as explained below:
 function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dynamics_sensor::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; solve_alg = Tsit5(), sense_alg = InterpolatingAdjoint(autojacvec = ZygoteVJP()), ensemble_alg = EnsembleThreads(), opt_1 = ADAM(0.01), opt_2 = LBFGS(), maxiters_1 = 100, maxiters_2 = 100, progress_plot = true, i_nominal = nothing, p_NN_0 = nothing, solve_kwargs...)
 
     # scenario parameters
-    @unpack ensemble, t_span, dim_x, dim_x_c = scenario
+    @unpack ensemble, t_span, t_save, dim_x, dim_x_c = scenario
     dim_ensemble = length(ensemble)
+    dim_t_save   = length(t_save)
     if isnothing(i_nominal)
         i_nominal = max(round(Int, dim_ensemble / 2), 1)
     end
@@ -104,21 +106,38 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
     function loss(p_NN)
         ensemble_prob = EnsembleProblem(prob_base, prob_func = generate_probs(p_NN))
 
-        fwd_ensemble_sol = Array(solve(ensemble_prob, solve_alg, ensemble_alg, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...))
-        
-        loss_val = mean(cost_terminal(fwd_ensemble_sol[1:dim_x, end, i], ensemble[i].r) for i = 1:dim_ensemble) + mean(fwd_ensemble_sol[end, end, :]) + cost_regularisor(p_NN)
+        fwd_ensemble_sol_full = solve(ensemble_prob, solve_alg, ensemble_alg, saveat = t_save, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
 
-        return loss_val, fwd_ensemble_sol
+        loss_val = 0.0f0
+        for i in 1:dim_ensemble
+            fwd_sol = Array(fwd_ensemble_sol_full[i])
+
+            if size(fwd_sol,2) > dim_t_save
+                fwd_sol = fwd_sol[:,1:dim_t_save]
+            end
+
+            if size(fwd_sol,2) == dim_t_save
+                x_aug_f = fwd_sol[:,end]
+                loss_val += x_aug_f[end] + cost_terminal(x_aug_f[1:dim_x], ensemble[i].r)
+            else
+                loss_val += 10000.0f0
+            end
+        end
+        loss_val /= Float32(dim_ensemble)
+        loss_val += cost_regularisor(p_NN)
+        
+        return loss_val, fwd_ensemble_sol_full
     end
 
     # learning progress callback setup
     loss_history = fill(NaN32, maxiters_1 + maxiters_2 + 2)
     iterator_learning = 1
-    cb_progress = function (p_NN_val, loss_val, fwd_ensemble_sol; plot_val = progress_plot)
-        @show loss_val
+    cb_progress = function (p_NN_val, loss_val, fwd_ensemble_sol_full; plot_val = progress_plot)
+        @show (loss_val, iterator_learning);
         loss_history[iterator_learning] = loss_val
         if plot_val
-            display(scatter(fwd_ensemble_sol[1:dim_x, :, i_nominal]', label = :false, plot_title = "System State: Learning Iteration $(iterator_learning)", layout = (dim_x, 1), size = (700, 200 * dim_x)))
+            fwd_ensemble_sol = Array(fwd_ensemble_sol_full[i_nominal])
+            display(scatter(fwd_ensemble_sol[1:dim_x, :]', label = :false, plot_title = "System State: Learning Iteration $(iterator_learning)", layout = (dim_x, 1), size = (700, 200 * dim_x)))
         end
         iterator_learning += 1
         return false
@@ -153,7 +172,9 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
         end
     end
 
-    fwd_ensemble_sol = solve(EnsembleProblem(prob_base, prob_func = generate_probs(result.u), output_func = generate_savedata(result.u)), solve_alg, ensemble_alg, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
+    fwd_ensemble_sol = solve(EnsembleProblem(prob_base, prob_func = generate_probs(result.u), output_func = generate_savedata(result.u)), solve_alg, ensemble_alg, saveat = t_save, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
+
+    loss_history = filter(!isnan, loss_history)
 
     return result, fwd_ensemble_sol, loss_history
 end

@@ -2,14 +2,14 @@ using ContinuousTimePolicyGradients
 using DiffEqFlux, ComponentArrays, LinearAlgebra, JLD2, OrdinaryDiffEq
 using Plots
 
-function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = nothing)
+function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = nothing, k_a_val = 10.0)
     # model + problem parameters
     (aₐ, aₙ, bₙ, cₙ, dₙ, aₘ, bₘ, cₘ, dₘ) = Float32.([-0.3, 19.373, -31.023, -9.717, -1.948, 40.44, -64.015, 2.922, -11.803])
     (m, I_yy, S, d, ωₐ, ζₐ) = Float32.([204.02, 247.439, 0.0409, 0.2286, 150.0, 0.7])
     (g, ρ₀, H, γₐ, Rₐ, T₀, λ) = Float32.([9.8, 1.225, 8435.0, 1.4, 286.0, 288.15, 0.0065])
     (a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(10), 4, 11E3])
 
-    (k_a, k_q, k_δ, k_δ̇, k_R) = Float32.([10.0, 0.0, 0.0, 0.1, 0.0])
+    (k_a, k_q, k_δ, k_δ̇, k_R) = Float32.([k_a_val, 0.0, 0.0, 0.1, 1E-4])
 
     # dynamic model
     dim_x = 7
@@ -45,16 +45,17 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
         (a_z, h, V, M, α, q) = y
         a_z_cmd  = r[1] 
         x_int    = x_c[1]
-        a_z_ref  = x_c[2]
+        x_ref    = x_c[2]
 
         y_NN = (K_A, K_I, K_R) = policy_NN([α / α_max; M / M_max; h / h_max], p_NN)
 
         # dx_ref  = Float32[-36.6667 -13.8889; 8.0 0.0] * x_ref + Float32[4.0; 0.0] * a_z_cmd
         # a_z_ref = Float32[-1.0083 3.4722] * x_ref
-        da_z_ref = (a_z_cmd - a_z_ref) / 0.2f0
+        dx_ref = (a_z_cmd - x_ref) / 0.2f0
+        a_z_ref = x_ref
 
         dx_c = [-K_A * (a_z - a_z_cmd) + q - a_z_cmd / V;
-                da_z_ref]
+                dx_ref]
         u    = [-K_I * x_int - K_R * q;
                 a_z_ref]
         return dx_c, u, y_NN
@@ -83,14 +84,14 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
 
     # cost definition
     function cost_running(t, x, y, u, r)
-        q       = x[4]
+        # q       = x[4]
         δ̇       = x[7]
         a_z     = y[1]
         # δ_c     = u[1]
         a_z_ref = u[2]
         a_z_cmd = r[1]
         # return k_a * ((a_z - a_z_cmd) / (exp(-2.0f0 * a_z_cmd) + a_z_cmd))^2 + k_δ * (δ_c / δ_max)^2 + k_δ̇ * (δ̇ / δ̇_max)^2
-        return k_a * ((a_z - a_z_ref) / (1.0f0 + a_z_cmd))^2 + k_δ̇ * (δ̇ / δ̇_max)^2 #+ k_q * (q / q_max)^2
+        return k_a * ((a_z - a_z_ref) / (exp(-a_z_cmd) + a_z_cmd))^2 + k_δ̇ * (δ̇ / δ̇_max)^2 # + k_δ * (δ_c / δ_max)^2 # + k_q * (q / q_max)^2
     end
 
     function cost_terminal(x_f, r)
@@ -102,15 +103,15 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     end
 
     function cost_regularisor(p_NN)
-        # return k_R * norm(p_NN)^2
-        return 0.0f0
+        return k_R * norm(p_NN)^2
+        # return 0.0f0
     end
 
     # NN construction
     dim_NN_hidden = 16
     dim_NN_input  = 3
     dim_K = 3
-    K_lb  = -Float32[3, 0.1, 2]  # Float32.(-0.5*ones(3))
+    K_lb  = -Float32[4, 0.2, 3] # -Float32[3, 0.1, 2]  # Float32.(-0.5*ones(3))
     K_ub  = -Float32.(0.001*ones(3)) # -zeros(Float32, 3)
     policy_NN = FastChain(
         FastDense(dim_NN_input,  dim_NN_hidden, tanh),
@@ -125,26 +126,27 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
                      for V₀      = 7E2:1E2:9E2
                      for a_z_cmd = 0:2E1:1E2 ]
     t_span = Float32.((0.0, 3.0))
+    t_save = t_span[1]:Δt_save:t_span[2]
 
-    scenario = (; ensemble = ensemble, t_span = t_span, dim_x = dim_x, dim_x_c = dim_x_c)
+    scenario = (; ensemble = ensemble, t_span = t_span, t_save = t_save, dim_x = dim_x, dim_x_c = dim_x_c)
 
     # NN training
-    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, dynamics_sensor, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = maxiters_1, maxiters_2 = maxiters_2, opt_2 = BFGS(), i_nominal = 1, p_NN_0 = p_NN_0, saveat = Δt_save)
+    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, dynamics_sensor, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = maxiters_1, maxiters_2 = maxiters_2, opt_2 = BFGS(initial_stepnorm = 0.0001), i_nominal = 1, p_NN_0 = p_NN_0, progress_plot = false)
 
     return result, policy_NN, fwd_ensemble_sol, loss_history
 end
 
 # execute optimisation and simulation
-@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(20, 150, 0.05f0)
+@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 500, 0.01f0; k_a_val = 100.0)
 
 ## save results
 # p_NN_prev = result.u
-# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(50, 100, 0.01f0; p_NN_0 = p_NN_prev)
+# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
 
-jldsave("DS_autopilot_08.jld2"; result, fwd_ensemble_sol, loss_history)
+jldsave("DS_autopilot_13.jld2"; result, fwd_ensemble_sol, loss_history)
 
 # plot results
-# (fwd_ensemble_sol, loss_history) = load("autopilot_saveat_0p1.jld2", "fwd_ensemble_sol", "loss_history")
+# (fwd_ensemble_sol, loss_history) = load(".jld2", "fwd_ensemble_sol", "loss_history")
 
 x_names = ["\$h\$" "\$V\$" "\$\\alpha\$" "\$q\$" "\$\\theta\$" "\$\\delta\$" "\$\\dot{\\delta}\$"]
 vars_x = 1:6 # [1,2,3, (1,2), (2,3)]
@@ -157,9 +159,8 @@ vars_y_NN = 1:3
 
 (f_x, f_u, f_y, f_y_NN, f_L) = view_result([], fwd_ensemble_sol, loss_history; x_names = x_names, vars_x = vars_x, u_names = u_names, vars_u = vars_u, y_names = y_names, vars_y = vars_y, y_NN_names = y_NN_names, vars_y_NN = vars_y_NN, linealpha = 0.6)
 
-##
-(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(5), 4, 11E3])
 
+(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(5), 4, 11E3])
 
 h = 5000.0
 α_list = 0:1E-3:deg2rad(45) 
