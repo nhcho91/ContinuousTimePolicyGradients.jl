@@ -62,6 +62,7 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
     # scenario parameters
     @unpack ensemble, t_span, t_save, dim_x, dim_x_c = scenario
     dim_ensemble = length(ensemble)
+    mean_factor  = Float32(1 / dim_ensemble)
     dim_t_save   = length(t_save)
     if isnothing(i_nominal)
         i_nominal = max(round(Int, dim_ensemble / 2), 1)
@@ -108,6 +109,16 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
 
         fwd_ensemble_sol_full = solve(ensemble_prob, solve_alg, ensemble_alg, saveat = t_save, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
 
+        # version 1: mean(sol[end])
+        # sol_length = Float32.([max(1,length(fwd_ensemble_sol_full[i])) for i in 1:dim_ensemble])
+        # sol_length_ratio = maximum(sol_length)./sol_length
+
+        # loss_val = mean([fwd_ensemble_sol_full[i][end][end] + cost_terminal(fwd_ensemble_sol_full[i][end][1:dim_x], ensemble[i].r) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
+        
+        # version 2: mean(Array[end])
+        # loss_val = mean([(Array(fwd_ensemble_sol_full[i])[end,end] + cost_terminal(Array(fwd_ensemble_sol_full[i])[1:dim_x,end], ensemble[i].r)) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
+
+        # version 3: scalar operation (best for code robustness as it can handle divergent case in ensemble)
         loss_val = 0.0f0
         for i in 1:dim_ensemble
             fwd_sol = Array(fwd_ensemble_sol_full[i])
@@ -118,12 +129,11 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
 
             if size(fwd_sol,2) == dim_t_save
                 x_aug_f = fwd_sol[:,end]
-                loss_val += x_aug_f[end] + cost_terminal(x_aug_f[1:dim_x], ensemble[i].r)
+                loss_val += (x_aug_f[end] + cost_terminal(x_aug_f[1:dim_x], ensemble[i].r)) * mean_factor
             else
-                loss_val += 10000.0f0
+                loss_val += 1000.0f0
             end
         end
-        loss_val /= Float32(dim_ensemble)
         loss_val += cost_regularisor(p_NN)
         
         return loss_val, fwd_ensemble_sol_full
@@ -144,7 +154,12 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
     end
 
     # NN training
-    result_coarse = DiffEqFlux.sciml_train(loss, p_NN_0, opt_1; cb = cb_progress, maxiters = maxiters_1)
+    if maxiters_1 <= 0
+        result_coarse = (; u = p_NN_0)
+    else
+        result_coarse = DiffEqFlux.sciml_train(loss, p_NN_0, opt_1; cb = cb_progress, maxiters = maxiters_1)
+    end
+    
     if maxiters_2 <= 0
         result = result_coarse
     else

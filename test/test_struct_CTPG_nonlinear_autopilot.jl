@@ -9,7 +9,7 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     (g, ρ₀, H, γₐ, Rₐ, T₀, λ) = Float32.([9.8, 1.225, 8435.0, 1.4, 286.0, 288.15, 0.0065])
     (a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
 
-    (k_a, k_q, k_δ, k_δ̇, k_R) = Float32.([k_a_val, 0.0, 0.01, 0.1, 1E-4])
+    (k_a, k_q, k_δ, k_δ̇, k_R) = Float32.([k_a_val, 0.0, 0.0, 0.1, 1E-3])
 
     # dynamic model
     dim_x = 7
@@ -41,22 +41,24 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
 
     dim_x_c = 2
     function dynamics_controller(t, x_c, y, r, p_NN, policy_NN)
-        (a_z, h, V, M, α, q, γ) = y
-        a_z_cmd  = r[1] 
+        (A_z, h, V, M, α, q, γ) = y
+        A_z_cmd  = r[1] 
         x_int    = x_c[1]
         x_ref    = x_c[2]
 
-        y_NN = (K_A, K_I, K_R) = policy_NN([ abs(α) / α_max; M / M_max; h / h_max], p_NN)
+        y_NN = (K_A, K_I, K_R) = policy_NN([α / α_max; M / M_max; h / h_max], p_NN)
 
-        # dx_ref  = [-36.6667f0 -13.8889f0; 8.0f0 0.0f0] * x_ref + [4.0f0; 0.0f0] * a_z_cmd
-        # a_z_ref = [-1.0083f0 3.4722f0] * x_ref
-        dx_ref = (a_z_cmd - x_ref) / 0.2f0
-        a_z_ref = x_ref
+        # dx_ref  = [-36.6667f0 -13.8889f0; 8.0f0 0.0f0] * x_ref + [4.0f0; 0.0f0] * A_z_cmd
+        # A_z_ref = [-1.0083f0 3.4722f0] * x_ref
+        dx_ref = (A_z_cmd - x_ref) / 0.2f0
+        A_z_ref = x_ref
 
-        dx_c = [K_A * (a_z_cmd - a_z) + q + (a_z_cmd + g * cos(γ)) / V;
+        δ_trim = -(aₘ * α^3 + bₘ * α * abs(α) + cₘ * (-7.0f0 + 8.0f0 * M / 3.0f0) * α) / dₘ
+
+        dx_c = [K_A * (A_z_cmd - A_z) + q + (A_z + g * cos(γ)) / V;
                 dx_ref]
-        u    = [K_I * x_int + K_R * q;
-                a_z_ref]
+        u    = [K_I * x_int + K_R * q + δ_trim;
+                A_z_ref]
         return dx_c, u, y_NN
     end
 
@@ -66,14 +68,14 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
         ρ = ρ₀ * exp(-h / H)
         Vₛ = sqrt(γₐ * Rₐ * (T₀ - λ * h))
         M = V / Vₛ
-        Q = 0.5f0 * ρ * V^2
         γ = θ - α
+        Q = 0.5f0 * ρ * V^2
 
         C_A = aₐ
         C_N = aₙ * α^3 + bₙ * α * abs(α) + cₙ * (2.0f0 - M / 3.0f0) * α + dₙ * δ
 
-        a_z = Q * S / m * (C_N * cos(α) - C_A * sin(α))
-        y   = [a_z;
+        A_z = Q * S / m * (C_N * cos(α) - C_A * sin(α))
+        y   = [A_z;
                 h;
                 V;
                 M;
@@ -91,7 +93,7 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
         δ_c     = u[1]
         a_z_ref = u[2]
         a_z_cmd = r[1]
-        return k_a * ((a_z - a_z_ref) / (1.0f0 + abs(a_z_cmd)))^2 + k_δ̇ * (δ̇ / δ̇_max)^2  + k_δ * (δ_c / δ_max)^2 + k_q * (q / q_max)^2
+        return k_a * ((a_z - a_z_ref) / (exp(-2.0f0*a_z_cmd) + a_z_cmd))^2 + k_δ̇ * (δ̇ / δ̇_max)^2  + k_δ * (δ_c / δ_max)^2 + k_q * (q / q_max)^2
     end
 
     function cost_terminal(x_f, r)
@@ -108,11 +110,11 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     end
 
     # NN construction
-    dim_NN_hidden = 10
+    dim_NN_hidden = 64
     dim_NN_input  = 3
     dim_K = 3
-    K_lb  = Float32.(0.001*ones(3))
-    K_ub  = Float32[4, 0.2, 2] 
+    K_lb  = zeros(Float32, 3) 
+    K_ub  = Float32[4,0.2,4]
     policy_NN = FastChain(
         FastDense(dim_NN_input,  dim_NN_hidden, tanh),
         FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
@@ -121,10 +123,10 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     )
 
     # scenario definition
-    ensemble = [ (; x₀ = Float32[h₀; V₀; zeros(5)], r = Float32[a_z_cmd])
-                     for h₀      = 5E3:1E3:8E3
-                     for V₀      = 7E2:1E2:9E2
-                     for a_z_cmd = -1E2:2.5E1:1E2 ]
+    ensemble = [ (; x₀ = Float32[h₀; V₀; zeros(5)], r = Float32[A_z_cmd])
+                     for h₀      = 5E3 #:1E3:8E3
+                     for V₀      = 7E2 #:1E2:9E2
+                     for A_z_cmd = 0:2E1:1E2 ]
     t_span = Float32.((0.0, 3.0))
     t_save = t_span[1]:Δt_save:t_span[2]
 
@@ -137,18 +139,16 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
 end
 
 ## execute optimisation and simulation
-@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 1000, 0.01f0; k_a_val = 100.0)
+@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 500, 0.01f0; k_a_val = 200.0)
 
 ## save results
-p_NN_prev = result.u
-@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
+# p_NN_prev = result.u
+# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 50.0, p_NN_0 = p_NN_prev)
 
-jldsave("DS_autopilot_Paper_base_3rd.jld2"; result, fwd_ensemble_sol, loss_history)
-p_NN_base = result.u
-jldsave("p_NN_loss_base.jld2"; p_NN_base, loss_history)
+jldsave("DS_autopilot_13.jld2"; result, fwd_ensemble_sol, loss_history)
 
-# plot simulation results
-# (result, fwd_ensemble_sol, loss_history) = load(".jld2", "result", "fwd_ensemble_sol", "loss_history")
+# plot results
+# (fwd_ensemble_sol, loss_history) = load(".jld2", "fwd_ensemble_sol", "loss_history")
 
 x_names = ["\$h\$" "\$V\$" "\$\\alpha\$" "\$q\$" "\$\\theta\$" "\$\\delta\$" "\$\\dot{\\delta}\$"]
 vars_x = 1:6 # [1,2,3, (1,2), (2,3)]
@@ -161,38 +161,19 @@ vars_y_NN = 1:3
 
 (f_x, f_u, f_y, f_y_NN, f_L) = view_result([], fwd_ensemble_sol, loss_history; x_names = x_names, vars_x = vars_x, u_names = u_names, vars_u = vars_u, y_names = y_names, vars_y = vars_y, y_NN_names = y_NN_names, vars_y_NN = vars_y_NN, linealpha = 0.6)
 
-## plot gain surfaces
-(p_NN_base) = load("p_NN_loss_base.jld2", "p_NN_base")
-(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
 
-dim_NN_hidden = 10
-dim_NN_input  = 3
-dim_K = 3
-K_lb  = Float32.(0.001*ones(3))
-K_ub  = Float32[4, 0.2, 2] 
-policy_NN = FastChain(
-    FastDense(dim_NN_input,  dim_NN_hidden, tanh),
-    FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
-    FastDense(dim_NN_hidden, dim_K),
-    (x, p) -> (K_ub - K_lb) .* σ.(x) .+ K_lb
-)
+(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
 
 h = 5000.0
 α_list = 0:1E-3:deg2rad(45) 
-M_list = 0.5:0.1:3.0
+M_list = 2.0:0.1:3.0
 
-func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[1]
-func_K_I(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[2]
-func_K_R(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[3]
-
-f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, zlabel = "\$K_{A}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+func_K_A(α, M) = policy_NN([α / α_max; M / M_max; h / h_max], result.u)[1]
+func_K_I(α, M) = policy_NN([α / α_max; M / M_max; h / h_max], result.u)[2]
+func_K_R(α, M) = policy_NN([α / α_max; M / M_max; h / h_max], result.u)[3]
+f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, title = "K_A", xlabel = "\$\\alpha\$", ylabel = "\$M\$")
+f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, title = "K_I", xlabel = "\$\\alpha\$", ylabel = "\$M\$")
+f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, title = "K_R", xlabel = "\$\\alpha\$", ylabel = "\$M\$")
 display(f_K_A)
-savefig(f_K_A, "f_K_A.pdf")
-
-f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, zlabel = "\$K_{I}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
 display(f_K_I)
-savefig(f_K_I, "f_K_I.pdf")
-
-f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, zlabel = "\$K_{R}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
 display(f_K_R)
-savefig(f_K_R, "f_K_R.pdf")
