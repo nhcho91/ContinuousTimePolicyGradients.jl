@@ -139,13 +139,14 @@ end
 ## execute optimisation and simulation
 @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 1000, 0.01f0; k_a_val = 100.0)
 
-## save results
-p_NN_prev = result.u
-@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
+# re-execute optimisation and simulation
+# p_NN_prev = result.u
+# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
 
-jldsave("DS_autopilot_Paper_base_3rd.jld2"; result, fwd_ensemble_sol, loss_history)
-p_NN_base = result.u
-jldsave("p_NN_loss_base.jld2"; p_NN_base, loss_history)
+## save results
+jldsave("DS_autopilot.jld2"; result, fwd_ensemble_sol, loss_history)
+# p_NN_base = result.u
+# jldsave("p_NN_loss_base.jld2"; p_NN_base, loss_history)
 
 # plot simulation results
 # (result, fwd_ensemble_sol, loss_history) = load(".jld2", "result", "fwd_ensemble_sol", "loss_history")
@@ -161,38 +162,38 @@ vars_y_NN = 1:3
 
 (f_x, f_u, f_y, f_y_NN, f_L) = view_result([], fwd_ensemble_sol, loss_history; x_names = x_names, vars_x = vars_x, u_names = u_names, vars_u = vars_u, y_names = y_names, vars_y = vars_y, y_NN_names = y_NN_names, vars_y_NN = vars_y_NN, linealpha = 0.6)
 
-## plot gain surfaces
-(p_NN_base) = load("p_NN_loss_base.jld2", "p_NN_base")
-(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
+# plot gain surfaces
+# (p_NN_base) = load("p_NN_loss_base.jld2", "p_NN_base")
+# (a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
 
-dim_NN_hidden = 10
-dim_NN_input  = 3
-dim_K = 3
-K_lb  = Float32.(0.001*ones(3))
-K_ub  = Float32[4, 0.2, 2] 
-policy_NN = FastChain(
-    FastDense(dim_NN_input,  dim_NN_hidden, tanh),
-    FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
-    FastDense(dim_NN_hidden, dim_K),
-    (x, p) -> (K_ub - K_lb) .* σ.(x) .+ K_lb
-)
+# dim_NN_hidden = 10
+# dim_NN_input  = 3
+# dim_K = 3
+# K_lb  = Float32.(0.001*ones(3))
+# K_ub  = Float32[4, 0.2, 2] 
+# policy_NN = FastChain(
+#     FastDense(dim_NN_input,  dim_NN_hidden, tanh),
+#     FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
+#     FastDense(dim_NN_hidden, dim_K),
+#     (x, p) -> (K_ub - K_lb) .* σ.(x) .+ K_lb
+# )
 
-h = 5000.0
-α_list = 0:1E-3:deg2rad(45) 
-M_list = 0.5:0.1:3.0
+# h = 5000.0
+# α_list = 0:1E-3:deg2rad(45) 
+# M_list = 0.5:0.1:3.0
 
-func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[1]
-func_K_I(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[2]
-func_K_R(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[3]
+# func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[1]
+# func_K_I(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[2]
+# func_K_R(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[3]
 
-f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, zlabel = "\$K_{A}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-display(f_K_A)
-savefig(f_K_A, "f_K_A.pdf")
+# f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, zlabel = "\$K_{A}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+# display(f_K_A)
+# savefig(f_K_A, "f_K_A.pdf")
 
-f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, zlabel = "\$K_{I}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-display(f_K_I)
-savefig(f_K_I, "f_K_I.pdf")
+# f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, zlabel = "\$K_{I}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+# display(f_K_I)
+# savefig(f_K_I, "f_K_I.pdf")
 
-f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, zlabel = "\$K_{R}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-display(f_K_R)
-savefig(f_K_R, "f_K_R.pdf")
+# f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, zlabel = "\$K_{R}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+# display(f_K_R)
+# savefig(f_K_R, "f_K_R.pdf")
