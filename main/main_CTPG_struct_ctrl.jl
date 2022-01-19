@@ -91,7 +91,7 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
         δ_c     = u[1]
         a_z_ref = u[2]
         a_z_cmd = r[1]
-        return k_a * ((a_z - a_z_ref) / (1.0f0 + abs(a_z_cmd)))^2 + k_δ̇ * (δ̇ / δ̇_max)^2  + k_δ * (δ_c / δ_max)^2 + k_q * (q / q_max)^2
+        return k_a * ((a_z - a_z_ref) / abs(a_z_cmd))^2 + k_δ̇ * (δ̇ / δ̇_max)^2  + k_δ * (δ_c / δ_max)^2 + k_q * (q / q_max)^2
     end
 
     function cost_terminal(x_f, r)
@@ -108,7 +108,7 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     end
 
     # NN construction
-    dim_NN_hidden = 10
+    dim_NN_hidden = 16
     dim_NN_input  = 3
     dim_K = 3
     K_lb  = Float32.(0.001*ones(3))
@@ -121,10 +121,11 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     )
 
     # scenario definition
-    ensemble = [ (; x₀ = Float32[h₀; V₀; zeros(5)], r = Float32[a_z_cmd])
+    ensemble = [ (; x₀ = Float32[h₀; V₀; α₀; zeros(4)], r = Float32[a_z_cmd])
                      for h₀      = 5E3:1E3:8E3
                      for V₀      = 7E2:1E2:9E2
-                     for a_z_cmd = -1E2:2.5E1:1E2 ]
+                     for α₀      = -0.4:0.1:0
+                     for a_z_cmd = filter(!iszero, 0:5E1:1E2) ]
     t_span = Float32.((0.0, 3.0))
     t_save = t_span[1]:Δt_save:t_span[2]
 
@@ -141,10 +142,10 @@ end
 
 # re-execute optimisation and simulation
 # p_NN_prev = result.u
-# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
+# @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(10, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
 
-## save results
-jldsave("DS_autopilot.jld2"; result, fwd_ensemble_sol, loss_history)
+# save results
+jldsave("DS_multialpha_2.jld2"; result, fwd_ensemble_sol, loss_history)
 # p_NN_base = result.u
 # jldsave("p_NN_loss_base.jld2"; p_NN_base, loss_history)
 
@@ -164,36 +165,36 @@ vars_y_NN = 1:3
 
 # plot gain surfaces
 # (p_NN_base) = load("p_NN_loss_base.jld2", "p_NN_base")
-# (a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
+(a_max, α_max, δ_max, δ̇_max, q_max, M_max, h_max) = Float32.([100.0, deg2rad(30), deg2rad(25), 1.5, deg2rad(60), 4, 11E3])
 
-# dim_NN_hidden = 10
-# dim_NN_input  = 3
-# dim_K = 3
-# K_lb  = Float32.(0.001*ones(3))
-# K_ub  = Float32[4, 0.2, 2] 
-# policy_NN = FastChain(
-#     FastDense(dim_NN_input,  dim_NN_hidden, tanh),
-#     FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
-#     FastDense(dim_NN_hidden, dim_K),
-#     (x, p) -> (K_ub - K_lb) .* σ.(x) .+ K_lb
-# )
+dim_NN_hidden = 10
+dim_NN_input  = 3
+dim_K = 3
+K_lb  = Float32.(0.001*ones(3))
+K_ub  = Float32[4, 0.2, 2] 
+policy_NN = FastChain(
+    FastDense(dim_NN_input,  dim_NN_hidden, tanh),
+    FastDense(dim_NN_hidden, dim_NN_hidden, tanh),
+    FastDense(dim_NN_hidden, dim_K),
+    (x, p) -> (K_ub - K_lb) .* σ.(x) .+ K_lb
+)
 
-# h = 5000.0
-# α_list = 0:1E-3:deg2rad(45) 
-# M_list = 0.5:0.1:3.0
+h = 5000.0
+α_list = 0:1E-3:0.4
+M_list = 0.5:0.1:3.0
 
-# func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[1]
-# func_K_I(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[2]
-# func_K_R(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], p_NN_base)[3]
+func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], result.u)[1]
+func_K_I(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], result.u)[2]
+func_K_R(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], result.u)[3]
 
-# f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, zlabel = "\$K_{A}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-# display(f_K_A)
-# savefig(f_K_A, "f_K_A.pdf")
+f_K_A = plot(α_list, M_list, func_K_A, st=:surface, label = :false, zlabel = "\$K_{A}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+display(f_K_A)
+savefig(f_K_A, "f_K_A.pdf")
 
-# f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, zlabel = "\$K_{I}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-# display(f_K_I)
-# savefig(f_K_I, "f_K_I.pdf")
+f_K_I = plot(α_list, M_list, func_K_I, st=:surface, label = :false, zlabel = "\$K_{I}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+display(f_K_I)
+savefig(f_K_I, "f_K_I.pdf")
 
-# f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, zlabel = "\$K_{R}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
-# display(f_K_R)
-# savefig(f_K_R, "f_K_R.pdf")
+f_K_R = plot(α_list, M_list, func_K_R, st=:surface, label = :false, zlabel = "\$K_{R}\$", xlabel = "\$\\left|\\alpha\\right|\$", ylabel = "\$M\$")
+display(f_K_R)
+savefig(f_K_R, "f_K_R.pdf")

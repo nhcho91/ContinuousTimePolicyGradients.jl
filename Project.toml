@@ -1,7 +1,7 @@
 name = "ContinuousTimePolicyGradients"
 uuid = "60abdf2c-17dd-423a-9318-09a4a18f6505"
 authors = ["JinraeKim <kjl950403@gmail.com> and contributors"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"

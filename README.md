@@ -8,6 +8,13 @@ ContinuousTimePolicyGradients.jl is a package for development and implementation
     - [ctpg](https://github.com/samuela/ctpg) developed by Samuel Ainsworth
     - [control_neuralode](https://github.com/IlyaOrson/control_neuralode) developed by Ilya Orson
 
+
+## Citation
+ContinuousTimePolicyGradients.jl has been developed considering control tasks as the main application. The CTPG method for cost gradient computation can be utilised to perform policy optimisation in the setup of either background planning (offline control law learning) or decision-time planning (online control profile optimisation). The following paper addresses the optimisation of structured neural controller using CTPG with the flight vehicle normal acceleration tracking controller as an illustrating example. Please consider citing the paper if you find this package useful.
+
+- Namhoon Cho, and Hyo-Sang Shin, "Optimisation of Structured Neural Controller Based on Continuous-Time Policy Gradient," [arXiv:2201.06262](https://arxiv.org/abs/2201.06262), January 2022.
+
+
 ## High-Level Training Interface: `CTPG_train()`
 ```julia
 CTPG_train(dynamics_plant::Function, dynamics_controller::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; 
