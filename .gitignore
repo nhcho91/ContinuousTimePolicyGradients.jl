@@ -2,3 +2,4 @@
 *.command
 *.jld2
 *.pdf
+.DS_Store
