@@ -132,20 +132,21 @@ function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = noth
     scenario = (; ensemble = ensemble, t_span = t_span, t_save = t_save, dim_x = dim_x, dim_x_c = dim_x_c)
 
     # NN training
-    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, dynamics_sensor, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = maxiters_1, maxiters_2 = maxiters_2, opt_2 = BFGS(initial_stepnorm = 0.0001), i_nominal = 1, p_NN_0 = p_NN_0, progress_plot = false)
+    (result, fwd_ensemble_sol, loss_history) = CTPG_train(dynamics_plant, dynamics_controller, dynamics_sensor, cost_running, cost_terminal, cost_regularisor, policy_NN, scenario; sense_alg = InterpolatingAdjoint(autojacvec = ReverseDiffVJP(true)), ensemble_alg = EnsembleThreads(), maxiters_1 = maxiters_1, maxiters_2 = maxiters_2, opt_2 = BFGS(initial_stepnorm = 0.0001f0), i_nominal = 1, p_NN_0 = p_NN_0, progress_plot = false) 
+    # solve_alg = Euler(), dt=0.001f0
 
     return result, policy_NN, fwd_ensemble_sol, loss_history
 end
 
 ## execute optimisation and simulation
-@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 1000, 0.01f0; k_a_val = 100.0)
+@time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(1000, 1500, 0.01f0; k_a_val = 100.0)
 
 # re-execute optimisation and simulation
 # p_NN_prev = result.u
 # @time (result, policy_NN, fwd_ensemble_sol, loss_history) = main(10, 1000, 0.01f0; k_a_val = 100.0, p_NN_0 = p_NN_prev)
 
 # save results
-jldsave("DS.jld2"; result, fwd_ensemble_sol, loss_history)
+jldsave("DS_base.jld2"; result, fwd_ensemble_sol, loss_history)
 # p_NN_base = result.u
 # jldsave("p_NN_loss_base.jld2"; p_NN_base, loss_history)
 
@@ -180,7 +181,7 @@ vars_y_NN = 1:3
 # )
 
 for h in 5E3:1E3:8E3
-    α_list = 0:1E-3:0.4
+    α_list = 0:1E-3:0.3
     M_list = 0.5:0.1:3.0
 
     func_K_A(α, M) = policy_NN([abs(α) / α_max; M / M_max; h / h_max], result.u)[1]
@@ -199,3 +200,13 @@ for h in 5E3:1E3:8E3
     display(f_K_R)
     savefig(f_K_R, "f_K_R_$(Int64(h)).pdf")
 end
+
+# Learning curve
+# using Plots, JLD2
+
+# loss_base       = load("DS_base.jld2", "loss_history")
+# loss_unscaled   = load("DS_unscaled.jld2", "loss_history")
+# loss_discrete   = load("DS_discrete.jld2", "loss_history")
+
+# f_J = plot([[loss_base], [loss_unscaled], [loss_discrete]], label = ["base" "unscaled" "discrete"], xlabel = "iteration", ylabel = "cost \$J\$", yaxis = :log10)
+# savefig(f_J, "f_J.pdf")

@@ -1,3 +1,157 @@
+# Test: ODESystem built with ModelingToolkit + Ensemble Simulation with DifferentialEquations + Optimisation with DiffEqFlux
+using DiffEqFlux, DifferentialEquations, Plots, Statistics, ModelingToolkit
+ann = FastChain(FastDense(1,32,tanh), FastDense(32,32,tanh), FastDense(32,1))
+dim_p = DiffEqFlux.paramlength(ann)
+
+@variables t x1(t) x2(t)
+@parameters p_NN[1:dim_p]
+D = Differential(t)
+
+deqs = [D(x1) ~ x2
+        D(x2) ~ ann([t],p_NN)[1]^3]
+sys = ODESystem(deqs, t, [x1, x2], p_NN; name = :sys)
+# sys = ODESystem(deqs, iv, dvs, ps; )
+# sys_simplified = structural_simplify(sys) # ---> not working
+
+u0 = [x1 => -4f0,
+      x2 => 0f0]
+p_NN_0 = initial_params(ann)
+p = [p_NN[i] => p_NN_0[i] for i in 1:dim_p]
+tspan = (0.0f0, 8.0f0)
+prob = ODEProblem(sys, u0, tspan, p; jac = true)
+@time sol = solve(prob, Tsit5(), saveat = 0.1f0) # ---> not working
+
+##--------
+using DiffEqFlux, DifferentialEquations, Plots, Statistics, ModelingToolkit
+dim_h = 32
+tspan = (0.0f0,8.0f0)
+ann = FastChain(FastDense(1,32,tanh), FastDense(32,32,tanh), FastDense(32,1))
+θ = initial_params(ann)
+function dxdt_(dx,x,p,t)
+    x1, x2 = x
+    dx[1] = x[2]
+    dx[2] = ann([t],p)[1]^3
+end
+x0 = [-4f0, 0f0]
+prob = ODEProblem(dxdt_,x0,tspan,θ)
+sys = structural_simplify(modelingtoolkitize(prob))
+prob_mtk = ODEProblem(sys, [], tspan, jac = true)
+
+@time sol = solve(prob_mtk, Tsit5(), saveat = 0.1f0) # ---> working
+
+#------------
+ts = Float32.(collect(0.0:0.01:tspan[2]))
+function predict_adjoint(θ)
+  Array(solve(prob_mtk,Tsit5(),p=θ,saveat=ts,sensealg=InterpolatingAdjoint(autojacvec=ZygoteVJP())))
+end
+function loss_adjoint(θ)
+  x = predict_adjoint(θ)
+  mean(abs2,4.0 .- x[1,:]) + 2mean(abs2,x[2,:]) + mean(abs2,[first(ann([t],θ)) for t in ts])/10
+end
+l = loss_adjoint(θ)
+cb = function (θ,l)
+  println(l)
+  # p = plot(solve(remake(prob,p=θ),Tsit5(),saveat=0.01),ylim=(-6,6),lw=3)
+  # plot!(p,ts,[first(ann([t],θ)) for t in ts],label="u(t)",lw=3)
+  # display(p)
+  return false
+end
+# Display the ODE with the current parameter values.
+cb(θ,l)
+loss1 = loss_adjoint(θ)
+res1 = DiffEqFlux.sciml_train(loss_adjoint, θ, ADAM(0.005), cb = cb,maxiters=100)
+res2 = DiffEqFlux.sciml_train(loss_adjoint, res1.u,
+                              BFGS(initial_stepnorm=0.01), cb = cb,maxiters=100,
+                              allow_f_increases = false)
+
+## ------------------------------------------------------------------------------------
+using ModelingToolkit
+
+function decay(;name)
+  @parameters t a
+  @variables x(t) f(t)
+  D = Differential(t)
+  ODESystem([
+      D(x) ~ -a*x + f
+    ];
+    name=name)
+end
+
+@named decay1 = decay()
+@named decay2 = decay()
+
+@parameters t
+D = Differential(t)
+connected = compose(ODESystem([
+                        decay2.f ~ decay1.x
+                        D(decay1.f) ~ 0
+                      ], t; name=:connected), decay1, decay2)
+
+equations(connected)
+
+#4-element Vector{Equation}:
+# Differential(t)(decay1₊f(t)) ~ 0
+# decay2₊f(t) ~ decay1₊x(t)
+# Differential(t)(decay1₊x(t)) ~ decay1₊f(t) - (decay1₊a*(decay1₊x(t)))
+# Differential(t)(decay2₊x(t)) ~ decay2₊f(t) - (decay2₊a*(decay2₊x(t)))
+
+simplified_sys = structural_simplify(connected)
+
+equations(simplified_sys)
+
+#3-element Vector{Equation}:
+# Differential(t)(decay1₊f(t)) ~ 0
+# Differential(t)(decay1₊x(t)) ~ decay1₊f(t) - (decay1₊a*(decay1₊x(t)))
+# Differential(t)(decay2₊x(t)) ~ decay1₊x(t) - (decay2₊a*(decay2₊x(t)))
+
+x0 = [
+  decay1.x => 1.0
+  decay1.f => 0.0
+  decay2.x => 1.0
+]
+p = [
+  decay1.a => 0.1
+  decay2.a => 0.2
+]
+
+using DifferentialEquations
+prob = ODEProblem(simplified_sys, x0, (0.0, 100.0), p)
+sol = solve(prob, Tsit5())
+sol[decay2.f]
+
+## ------------------------------------------------------------------------------------
+using DifferentialEquations, DiffEqFlux
+pa = [1.0]
+u0 = [3.0]
+θ = [u0;pa]
+
+function model1(θ,ensemble)
+  prob = ODEProblem((u, p, t) -> 1.01u .* p, [θ[1]], (0.0, 1.0), [θ[2]])
+
+  function prob_func(prob, i, repeat)
+    remake(prob, u0 = 0.5 .+ i/100 .* prob.u0)
+  end
+
+  ensemble_prob = EnsembleProblem(prob, prob_func = prob_func)
+  sim = solve(ensemble_prob, Tsit5(), ensemble, saveat = 0.1, trajectories = 100)
+end
+
+# loss function
+loss_serial(θ)   = sum(abs2,1.0.-Array(model1(θ,EnsembleSerial())))
+loss_threaded(θ) = sum(abs2,1.0.-Array(model1(θ,EnsembleThreads())))
+
+cb = function (θ,l) # callback function to observe training
+  @show l
+  false
+end
+
+opt = ADAM(0.1)
+l1 = loss_serial(θ)
+res_serial = DiffEqFlux.sciml_train(loss_serial, θ, opt; cb = cb, maxiters=100)
+res_threads = DiffEqFlux.sciml_train(loss_threaded, θ, opt; cb = cb, maxiters=100)
+
+## ------------------------------------------------------------------------------------
+
 using DifferentialEquations
 prob = ODEProblem((u,p,t)->1.01*[u[2];u[1]],[0.5, 1.0],(0.0,1.0))
 function prob_func(prob,i,repeat)
@@ -64,8 +218,8 @@ res = DiffEqFlux.sciml_train(loss,pinit,ADAM(), maxiters = 100)
 #try Newton method of optimization
 res = DiffEqFlux.sciml_train(loss,pinit,BFGS())
 
-## ------------------------------------------------------------------------------------
 
+## ------------------------------------------------------------------------------------
 
 # compatibility of modelingtoolkitize and ensemble parellel simulation
 using DifferentialEquations, ModelingToolkit
