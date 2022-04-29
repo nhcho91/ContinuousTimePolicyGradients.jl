@@ -97,11 +97,11 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
         end
     end
 
-    if dim_ensemble == 1
-        prob_mtk = modelingtoolkitize(prob_base)
-        prob_base = ODEProblem(prob_mtk, [], t_span, jac = true)
-        ensemble_alg = EnsembleSerial()
-    end
+    # if dim_ensemble == 1
+    #     prob_mtk = modelingtoolkitize(prob_base)
+    #     prob_base = ODEProblem(prob_mtk, [], t_span, jac = true)
+    #     ensemble_alg = EnsembleSerial()
+    # end
 
     # loss function definition
     function loss(p_NN)
@@ -110,31 +110,36 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
         fwd_ensemble_sol_full = solve(ensemble_prob, solve_alg, ensemble_alg, saveat = t_save, trajectories = dim_ensemble, sensealg = sense_alg; solve_kwargs...)
 
         # version 1: mean(sol[end])
-        # sol_length = Float32.([max(1,length(fwd_ensemble_sol_full[i])) for i in 1:dim_ensemble])
-        # sol_length_ratio = maximum(sol_length)./sol_length
+        sol_length = Float32.([max(1,length(fwd_ensemble_sol_full[i])) for i in 1:dim_ensemble])
+        sol_length_ratio = maximum(sol_length)./sol_length
 
-        # loss_val = mean([fwd_ensemble_sol_full[i][end][end] + cost_terminal(fwd_ensemble_sol_full[i][end][1:dim_x], ensemble[i].r) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
+        # if fwd_ensemble_sol_full[1].retcode == :Success
+        if size(Array(fwd_ensemble_sol_full[1]), 2) > 10
+            loss_val = mean([fwd_ensemble_sol_full[i][end][end] + cost_terminal(fwd_ensemble_sol_full[i][end][1:dim_x], ensemble[i].r) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
+        else
+            loss_val = Inf
+        end
         
         # version 2: mean(Array[end])
         # loss_val = mean([(Array(fwd_ensemble_sol_full[i])[end,end] + cost_terminal(Array(fwd_ensemble_sol_full[i])[1:dim_x,end], ensemble[i].r)) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
 
         # version 3: scalar operation (best for code robustness as it can handle divergent case in ensemble)
-        loss_val = 0.0f0
-        for i in 1:dim_ensemble
-            fwd_sol = Array(fwd_ensemble_sol_full[i])
+        # loss_val = 0.0f0
+        # for i in 1:dim_ensemble
+        #     fwd_sol = Array(fwd_ensemble_sol_full[i])
 
-            if size(fwd_sol,2) > dim_t_save
-                fwd_sol = fwd_sol[:,1:dim_t_save]
-            end
+        #     if size(fwd_sol,2) > dim_t_save
+        #         fwd_sol = fwd_sol[:,1:dim_t_save]
+        #     end
 
-            if size(fwd_sol,2) == dim_t_save
-                x_aug_f = fwd_sol[:,end]
-                loss_val += (x_aug_f[end] + cost_terminal(x_aug_f[1:dim_x], ensemble[i].r)) * mean_factor
-            else
-                loss_val += 1000.0f0
-            end
-        end
-        loss_val += cost_regularisor(p_NN)
+        #     if size(fwd_sol,2) == dim_t_save
+        #         x_aug_f = fwd_sol[:,end]
+        #         loss_val += (x_aug_f[end] + cost_terminal(x_aug_f[1:dim_x], ensemble[i].r)) * mean_factor
+        #     else
+        #         loss_val += 1000.0f0
+        #     end
+        # end
+        # loss_val += cost_regularisor(p_NN)
         
         return loss_val, fwd_ensemble_sol_full
     end
@@ -261,19 +266,19 @@ function view_result(i_plot_list, fwd_ensemble_sol, loss_history, save_fig = tru
         if i == first(i_plot_list)
             f_x = plot(sol, vars = vars_x, layout = layout_x, label = :false, xlabel = xlabel_t, ylabel = ylabel_x, size = (800, 160 * length(vars_x)); plot_kwargs...)
 
-            f_u = plot(t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u; plot_kwargs...)
+            f_u = plot(t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u, size = (800, 160 * length(vars_u)); plot_kwargs...)
 
-            f_y = plot(t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y; plot_kwargs...)
+            f_y = plot(t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y, size = (800, 160 * length(vars_y)); plot_kwargs...)
 
-            f_y_NN = plot(t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN; plot_kwargs...)
+            f_y_NN = plot(t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN, size = (800, 160 * length(vars_y_NN)); plot_kwargs...)
         else
             plot!(f_x, sol, vars = vars_x, layout = layout_x, label = :false, xlabel = xlabel_t, ylabel = ylabel_x, size = (800, 160 * length(vars_x)); plot_kwargs...)
 
-            plot!(f_u, t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u; plot_kwargs...)
+            plot!(f_u, t, u[:, vars_u], layout = layout_u, label = :false, xlabel = xlabel_t, ylabel = ylabel_u, size = (800, 160 * length(vars_u)); plot_kwargs...)
 
-            plot!(f_y, t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y; plot_kwargs...)
+            plot!(f_y, t, y[:, vars_y], layout = layout_y, label = :false, xlabel = xlabel_t, ylabel = ylabel_y, size = (800, 160 * length(vars_y)); plot_kwargs...)
 
-            plot!(f_y_NN, t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN; plot_kwargs...)
+            plot!(f_y_NN, t, y_NN[:, vars_y_NN], layout = layout_y_NN, label = :false, xlabel = xlabel_t, ylabel = ylabel_y_NN, size = (800, 160 * length(vars_y_NN)); plot_kwargs...)
         end
     end
     f_L = plot(loss_history, label = :false, xlabel = "iteration", ylabel = "\$L\$"; plot_kwargs...)
