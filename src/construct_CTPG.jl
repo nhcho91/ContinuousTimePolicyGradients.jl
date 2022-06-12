@@ -57,7 +57,7 @@ The keyword arguments should be provided as explained below:
 - `loss_history`: The history of loss function evaluated at each iteration.
 """
 
-function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dynamics_sensor::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; solve_alg = Tsit5(), sense_alg = InterpolatingAdjoint(autojacvec = ZygoteVJP()), ensemble_alg = EnsembleThreads(), opt_1 = ADAM(0.01), opt_2 = LBFGS(), maxiters_1 = 100, maxiters_2 = 100, progress_plot = true, i_nominal = nothing, p_NN_0 = nothing, solve_kwargs...)
+function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dynamics_sensor::Function, cost_running::Function, cost_terminal::Function, cost_regularisor::Function, policy_NN, scenario; solve_alg = Tsit5(), sense_alg = InterpolatingAdjoint(autojacvec = ZygoteVJP()), ensemble_alg = EnsembleThreads(), opt_1 = ADAM(0.01), opt_2 = LBFGS(), maxiters_1 = 100, maxiters_2 = 100, progress_plot = true, i_nominal = nothing, rd_seed = 0, p_NN_0 = nothing, solve_kwargs...)
 
     # scenario parameters
     @unpack ensemble, t_span, t_save, dim_x, dim_x_c = scenario
@@ -69,9 +69,13 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
     end
 
     # NN parameters initialisation
+    rng = Random.default_rng()
+    Random.seed!(rng, rd_seed)
     if isnothing(p_NN_0)
-        p_NN_0 = initial_params(policy_NN)
+        # p_NN, st_NN = Lux.setup(rng, policy_NN)
+        p_NN_0 = Lux.ComponentArray(Lux.initialparameters(rng, policy_NN))
     end
+    st_NN = Lux.initialstates(rng, policy_NN)
 
     # augmented dynamics
     function fwd_dynamics(r)
@@ -81,7 +85,7 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
             # ∫cost_running = x_aug[end]
             
             y            = dynamics_sensor(t, x)
-            (dx_c, u, _) = dynamics_controller(t, x_c, y, r, p_NN, policy_NN)
+            (dx_c, u, _) = dynamics_controller(t, x_c, y, r, p_NN, st_NN, policy_NN)
             dx           = dynamics_plant(t, x, u)
 
             return [dx; dx_c; cost_running(t, x, y, u, r)]
@@ -113,7 +117,6 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
         sol_length = Float32.([max(1,length(fwd_ensemble_sol_full[i])) for i in 1:dim_ensemble])
         sol_length_ratio = maximum(sol_length)./sol_length
 
-        # if fwd_ensemble_sol_full[1].retcode == :Success
         if size(Array(fwd_ensemble_sol_full[1]), 2) > 10
             loss_val = mean([fwd_ensemble_sol_full[i][end][end] + cost_terminal(fwd_ensemble_sol_full[i][end][1:dim_x], ensemble[i].r) for i in 1:dim_ensemble] .* sol_length_ratio) + cost_regularisor(p_NN)
         else
@@ -159,16 +162,23 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
     end
 
     # NN training
+    adtype = Optimization.AutoZygote()
+    optf = Optimization.OptimizationFunction((x, p) -> loss(x), adtype)
+
+    optprob = Optimization.OptimizationProblem(optf, p_NN_0)
     if maxiters_1 <= 0
         result_coarse = (; u = p_NN_0)
     else
-        result_coarse = DiffEqFlux.sciml_train(loss, p_NN_0, opt_1; cb = cb_progress, maxiters = maxiters_1)
+        # result_coarse = DiffEqFlux.sciml_train(loss, p_NN_0, opt_1; cb = cb_progress, maxiters = maxiters_1)
+        result_coarse = Optimization.solve(optprob, opt_1; callback = cb_progress, maxiters = maxiters_1)
     end
     
+    optprob2 = remake(optprob, u0 = result_coarse.u)
     if maxiters_2 <= 0
         result = result_coarse
     else
-        result = DiffEqFlux.sciml_train(loss, result_coarse.u, opt_2; cb = cb_progress, maxiters = maxiters_2)
+        # result = DiffEqFlux.sciml_train(loss, result_coarse.u, opt_2; cb = cb_progress, maxiters = maxiters_2)
+        result = Optimization.solve(optprob2, opt_2; callback = cb_progress, maxiters = maxiters_2)
     end
 
     # Forward solution for optimised p_NN 
@@ -179,7 +189,7 @@ function CTPG_train(dynamics_plant::Function, dynamics_controller::Function, dyn
             x_c = x_aug[dim_x+1:end-1]
 
             y = dynamics_sensor(t, x)
-            (_, u, y_NN) = dynamics_controller(t, x_c, y, r, p_NN, policy_NN)
+            (_, u, y_NN) = dynamics_controller(t, x_c, y, r, p_NN, st_NN, policy_NN)
 
             return (; u = u, y = y, y_NN = y_NN)
         end

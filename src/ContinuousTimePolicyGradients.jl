@@ -1,6 +1,6 @@
 module ContinuousTimePolicyGradients
-    using LinearAlgebra, Statistics
-    using OrdinaryDiffEq, DiffEqFlux, GalacticOptim
+    using LinearAlgebra, Statistics, Random
+    using OrdinaryDiffEq, DiffEqFlux, DiffEqSensitivity, Lux, Optimization, OptimizationFlux, OptimizationOptimJL
     using UnPack, Plots
 
     export CTPG_train, view_result
