@@ -1,22 +1,22 @@
 using ContinuousTimePolicyGradients
-using Random, LinearAlgebra
+using Random, LinearAlgebra, Statistics
 using JLD2, Plots
-using DiffEqSensitivity, OrdinaryDiffEq, Lux, Zygote
+using SciMLSensitivity, OrdinaryDiffEq, DiffEqCallbacks, Lux, Zygote
 using Optimization, OptimizationFlux, OptimizationOptimJL
 
 # main function
 function main(maxiters_1::Int, maxiters_2::Int, Δt_save::Float32; p_NN_0 = nothing, k_r_f_val = 1.0f0, k_v_f_val = 1.0f0, t_f_val = 45.0f0, rd_seed = 0)
     # model + problem parameters
-(σ_L, h₀, V₀, γ₀, s₀, θ_f_d, h_f_d, V_f_d, γ_f_d, m₀, m_fuel_max)  =   Float32.([0, 2480.0, 505.0, deg2rad(0), 11.5E3, deg2rad(45), 0.0, 2.5, deg2rad(-90.0), 62E3, 10400.0])
-(μ, R,  Ω,  ρ₀, H)  =   Float32.([4.282837E13, 3389.5E3, 2*pi/(1.025957*24*60*60), 0.0263, 10153.6])
-Ω̅ = Float32.([0, 0, Ω])
-(I_sp, β, R_LD, g, T_max, η_T_min, η_T_max, σ_T_min, σ_T_max) = Float32.([360.0, 379.0, 0.54, 9.805, 8E5, -pi/2, pi/2, - pi/12, 2*pi + pi/12])
-(θ₀, T_normalised_min, T_min) = Float32.([θ_f_d - s₀/R, 0.2, 0.2*T_max])
+    (σ_L, h₀, V₀, γ₀, s₀, θ_f_d, h_f_d, V_f_d, γ_f_d, m₀, m_fuel_max)  =   Float32.([0, 2480.0, 505.0, deg2rad(0), 11.5E3, deg2rad(45), 0.0, 2.5, deg2rad(-90.0), 62E3, 10400.0])
+    (μ, R,  Ω,  ρ₀, H)  =   Float32.([4.282837E13, 3389.5E3, 2*pi/(1.025957*24*60*60), 0.0263, 10153.6])
+    Ω̅ = Float32.([0, 0, Ω])
+    (I_sp, β, R_LD, g, T_max, η_T_min, η_T_max, σ_T_min, σ_T_max) = Float32.([360.0, 379.0, 0.54, 9.805, 8E5, -pi/2, pi/2, - pi/12, 2*pi + pi/12])
+    (θ₀, T_normalised_min, T_min) = Float32.([θ_f_d - s₀/R, 0.2, 0.2*T_max])
 
-r̅_f_d = Float32.((R + h_f_d) * [cos(θ_f_d), 0.0, sin(θ_f_d)])
-v̅_f_d = Float32.(V_f_d * [-sin(θ_f_d - γ_f_d); 0.0; cos(θ_f_d - γ_f_d)])
-m_dry = m₀ - m_fuel_max
-m_sw  = 1f0
+    r̅_f_d = Float32.((R + h_f_d) * [cos(θ_f_d), 0.0, sin(θ_f_d)])
+    v̅_f_d = Float32.(V_f_d * [-sin(θ_f_d - γ_f_d); 0.0; cos(θ_f_d - γ_f_d)])
+    m_dry = m₀ - m_fuel_max
+    m_sw  = 1f0
 
     (k_r_f, k_v_f, k_T, k_p) = Float32.([k_r_f_val, k_v_f_val, 1.0, 1e-6])
 
@@ -200,3 +200,4 @@ m_sw  = 1f0
 
 dim_x           = 7
 dim_z           = 6
+dim_u           = 3
